@@ -1,5 +1,10 @@
 const logger = require("../config/logger");
 const db = require("./dbService");
+const {
+  decrypt,
+  dataEncryptionColumns,
+  passwordEncryptionColumns,
+} = require("./cryptoService");
 
 const fetchLifeRecords = async (req, res) => {
   const type = req.params.type;
@@ -47,29 +52,43 @@ const fetchLifeRecords = async (req, res) => {
     return res.status(400).send("Invalid record type");
   }
 
+  // Mapping of which columns to decrypt for each type
+  const decryptConfig = {
+    lifeGen: { fields: dataEncryptionColumns, type: "data" },
+    lifeQuote: { fields: dataEncryptionColumns, type: "data" },
+    proposal: { fields: dataEncryptionColumns, type: "data" },
+    submission: { fields: dataEncryptionColumns, type: "data" },
+    // Add more types and configs as needed
+  };
+
   try {
     let rows;
-
     [rows] = await db.execute(query);
     logger.info(`Fetched all ${type} records`);
+
+    const config = decryptConfig[type] || { fields: [], type: "data" };
+
+    // Decrypt relevant fields in each row
+    const decryptRow = (row) => {
+      const result = {};
+      for (const key in row) {
+        let value = row[key];
+        if (config.fields.includes(key.toLowerCase()) && value) {
+          value = decrypt(value, config.type);
+        }
+        result[key.toLowerCase()] = value;
+      }
+      return result;
+    };
 
     if (rows.length > 0) {
       if (type === "lifeGen" || type === "lifeQuote") {
         // Return array of results for LifeGen
-        const results = rows.map((row) => {
-          const result = {};
-          for (const key in row) {
-            result[key.toLowerCase()] = row[key];
-          }
-          return result;
-        });
+        const results = rows.map(decryptRow);
         res.status(200).json(results);
       } else {
         // Return single object for other types
-        const result = {};
-        for (const key in rows[0]) {
-          result[key.toLowerCase()] = rows[0][key];
-        }
+        const result = decryptRow(rows[0]);
         res.status(200).json(result);
       }
     } else {
